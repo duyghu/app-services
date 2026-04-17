@@ -1,0 +1,79 @@
+name: Build, Test, and Deploy to Azure Web App (Container)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  APP_PORT: 3000
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/frontendapp-node
+  AZURE_RESOURCE_GROUP: web-labs-rg-saurabh
+  AZURE_WEBAPP_NAME: frontendapp-web-saurabh
+
+jobs:
+  build-test-and-deploy:
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test --if-present
+
+      - name: Build app
+        run: npm run build --if-present
+
+      # ✅ Azure Login (SINGLE SECRET VERSION)
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # 🔐 Login to Docker Hub
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 🐳 Build and push image
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:latest
+
+      # 🚀 Deploy to Azure Web App
+      - name: Deploy container to Azure Web App
+        run: |
+          az webapp config container set \
+            -g "${{ env.AZURE_RESOURCE_GROUP }}" \
+            -n "${{ env.AZURE_WEBAPP_NAME }}" \
+            --container-image-name "${{ env.IMAGE_NAME }}:${{ github.sha }}" \
+            --container-registry-url "https://index.docker.io"
+
+      # 🔄 Restart app
+      - name: Restart Web App
+        run: |
+          az webapp restart \
+            -g "${{ env.AZURE_RESOURCE_GROUP }}" \
+            -n "${{ env.AZURE_WEBAPP_NAME }}"
